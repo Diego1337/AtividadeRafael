@@ -116,3 +116,6 @@ with col2:
             st.success(f"Encontrado! Diferença: {menor_diff:.2f}")
             st.write(f"Arquivo: **{nome_img}**")
             if melhor_img: st.image(melhor_img, width=200)
+
+st.title("Meu App de Reconhecimento")
+# ...

@@ -1,106 +1,118 @@
-import streamlit as st
-from pymongo import MongoClient
-from PIL import Image
-import io
-import gridfs
-
-import streamlit as st
 import os
-import gridfs
+import streamlit as st
 from pymongo import MongoClient
+import gridfs
 from PIL import Image
 import io
+import numpy as np
 
-# --- 1. Configuração da Página ---
-st.set_page_config(page_title="Galeria MongoDB", layout="wide")
+# --- SEÇÃO DE DEPURAÇÃO (DEBUG) ---
+# Isso vai aparecer no topo do app para confirmar que o 'os' foi importado
+# e mostrar onde o Python está procurando a pasta.
+print("Módulo OS importado com sucesso.") 
+print(f"Diretório de trabalho atual: {os.getcwd()}")
 
-st.title("📸 Gerenciador de Imagens - MongoDB Atlas")
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Reconhecimento Facial FEI", layout="wide")
+st.title("📸 Gerenciador e Reconhecimento - MongoDB Atlas")
 
-# --- 2. Conexão com o Banco de Dados (Cacheada) ---
+# --- 2. CONEXÃO COM O BANCO ---
 @st.cache_resource
-def get_database_connection():
-    # Substitua pela sua URI correta se necessário
+def get_connection():
+    # URI do seu banco
     uri = "mongodb+srv://diegorlima8_db_user:04KskmDzmVNDK53t@cluster0.4nsgcvo.mongodb.net/?appName=Cluster0"
-    client = MongoClient(uri)
-    return client
+    return MongoClient(uri)
 
 try:
-    client = get_database_connection()
+    client = get_connection()
     db = client['midias']
     fs = gridfs.GridFS(db)
     st.sidebar.success("Conectado ao MongoDB Atlas!")
 except Exception as e:
-    st.error(f"Erro ao conectar no banco: {e}")
+    st.error(f"Erro de conexão: {e}")
     st.stop()
 
-# --- 3. Seção de UPLOAD (Protegida por Botão) ---
-st.header("1. Upload de Imagens")
-st.markdown("Clique no botão abaixo para varrer a pasta local e salvar as imagens novas no banco.")
+# --- 3. FUNÇÃO MATEMÁTICA ---
+def calcular_diferenca(imagem1, imagem2):
+    img1_gray = imagem1.convert('L').resize((100, 100))
+    img2_gray = imagem2.convert('L').resize((100, 100))
+    arr1 = np.array(img1_gray)
+    arr2 = np.array(img2_gray)
+    return np.mean(np.abs(arr1 - arr2))
 
-if st.button("Inciar Carregamento das Imagens"):
-    pasta_imagens = 'frontalimages_manuallyaligned_part1'
-    
-    if os.path.exists(pasta_imagens):
-        arquivos = [f for f in os.listdir(pasta_imagens) if f.lower().endswith('.jpg')]
-        st.info(f"Encontrados {len(arquivos)} arquivos na pasta '{pasta_imagens}'. Processando...")
-        
-        barra_progresso = st.progress(0)
-        contador = 0
-        
-        for i, nome_arquivo in enumerate(arquivos):
-            caminho_completo = os.path.join(pasta_imagens, nome_arquivo)
-            
-            # Verifica se já existe para não duplicar
-            if not fs.exists({"filename": nome_arquivo}):
-                try:
-                    with open(caminho_completo, 'rb') as f:
-                        fs.put(f, filename=nome_arquivo)
-                        contador += 1
-                except Exception as e:
-                    st.error(f"Erro ao salvar {nome_arquivo}: {e}")
-            
-            # Atualiza barra de progresso
-            barra_progresso.progress((i + 1) / len(arquivos))
-            
-        st.success(f"Processo finalizado! {contador} novas imagens foram salvas.")
-    else:
-        st.error(f"A pasta '{pasta_imagens}' não foi encontrada no diretório do projeto.")
+# --- 4. ÁREA DE UPLOAD (ADMIN) ---
+with st.expander("📂 Carregar Imagens (Executar uma vez)"):
+    st.write(f"Diretório atual: `{os.getcwd()}`")
+
+    if st.button("Iniciar Carregamento das Imagens"):
+        pasta_imagens = 'frontalimages_manuallyaligned_part1'
+
+        # Verificação robusta do caminho
+        if not os.path.exists(pasta_imagens):
+            st.error(f"❌ ERRO: A pasta `{pasta_imagens}` não foi encontrada!")
+            st.warning("Dica: Verifique se você descompactou a pasta de imagens DENTRO da mesma pasta onde está este arquivo app.py.")
+        else:
+            arquivos = [f for f in os.listdir(pasta_imagens) if f.lower().endswith('.jpg')]
+
+            if len(arquivos) == 0:
+                st.warning("A pasta existe, mas não tem arquivos .jpg dentro dela.")
+            else:
+                st.info(f"Processando {len(arquivos)} imagens...")
+                barra = st.progress(0)
+                contador = 0
+
+                for i, nome_arquivo in enumerate(arquivos):
+                    caminho = os.path.join(pasta_imagens, nome_arquivo)
+                    if not fs.exists({"filename": nome_arquivo}):
+                        try:
+                            with open(caminho, 'rb') as f:
+                                fs.put(f, filename=nome_arquivo)
+                                contador += 1
+                        except Exception as e:
+                            st.error(f"Erro no arquivo {nome_arquivo}: {e}")
+                    barra.progress((i + 1) / len(arquivos))
+
+                st.success(f"Sucesso! {contador} imagens novas foram salvas no MongoDB.")
 
 st.divider()
 
-# --- 4. Seção de GALERIA (Exibição) ---
-st.header("2. Galeria de Imagens no Banco")
+# --- 5. ÁREA DE RECONHECIMENTO (USUÁRIO) ---
+st.header("🕵️ Reconhecimento Facial")
+col1, col2 = st.columns([1, 2])
 
-# Botão para atualizar a lista manualmente
-if st.button("Atualizar Galeria"):
-    st.rerun()
+with col1:
+    up_file = st.file_uploader("Sua foto", type=["jpg", "png"])
+    if up_file:
+        img_busca = Image.open(up_file)
+        st.image(img_busca, width=200)
 
-arquivos_banco = list(fs.find())
-total_arquivos = len(arquivos_banco)
+with col2:
+    if up_file and st.button("🔍 Buscar Similar"):
+        docs = list(fs.find())
+        if not docs:
+            st.warning("Banco vazio.")
+        else:
+            melhor_img = None
+            menor_diff = float('inf')
+            nome_img = ""
 
-st.write(f"**Total de imagens no banco:** {total_arquivos}")
+            bar = st.progress(0)
+            for i, doc in enumerate(docs):
+                try:
+                    # Ler apenas se necessário (otimização básica)
+                    d = doc.read()
+                    curr_img = Image.open(io.BytesIO(d))
+                    diff = calcular_diferenca(img_busca, curr_img)
 
-if total_arquivos > 0:
-    # Cria colunas para exibir em grade (grid)
-    cols = st.columns(4) # 4 imagens por linha
-    
-    # Limita a exibição para não travar se tiverem milhares (ex: mostra as últimas 20)
-    # Remova o [:20] se quiser ver todas
-    for index, arquivo in enumerate(arquivos_banco[:20]):
-        coluna_atual = cols[index % 4]
-        
-        with coluna_atual:
-            try:
-                img_data = arquivo.read()
-                image = Image.open(io.BytesIO(img_data))
-                st.image(image, caption=arquivo.filename, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Erro ao abrir {arquivo.filename}")
-    
-    if total_arquivos > 20:
-        st.info("Exibindo apenas as primeiras 20 imagens para otimizar a performance.")
-else:
-    st.warning("Nenhuma imagem encontrada no GridFS.")
+                    if diff < menor_diff:
+                        menor_diff = diff
+                        melhor_img = curr_img
+                        nome_img = doc.filename
 
-st.title("Meu App de Reconhecimento")
-# ...
+                    if i % 5 == 0: bar.progress((i+1)/len(docs))
+                except: pass
+
+            bar.empty()
+            st.success(f"Encontrado! Diferença: {menor_diff:.2f}")
+            st.write(f"Arquivo: **{nome_img}**")
+            if melhor_img: st.image(melhor_img, width=200)
